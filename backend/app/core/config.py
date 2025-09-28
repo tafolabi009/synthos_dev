@@ -36,7 +36,7 @@ class Settings:
     ALLOWED_HOSTS: List[str] = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
     
     # CORS Configuration with secure defaults
-    _cors_origins = os.getenv("CORS_ORIGINS", "https://localhost:3000,https://127.0.0.1:3000")
+    _cors_origins = os.getenv("CORS_ORIGINS", "https://localhost:3000,https://127.0.0.1:3000,https://synthos-dev.vercel.app")
     # Only allow HTTP origins in development mode
     if ENVIRONMENT == "development":
         _cors_origins += ",http://localhost:3000,http://127.0.0.1:3000"

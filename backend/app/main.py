@@ -16,6 +16,8 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
+import warnings
+import pydantic
 
 # Conditional imports for monitoring
 try:
@@ -40,6 +42,9 @@ from app.services.auth import AuthService
 # Setup structured logging
 setup_logging()
 logger = structlog.get_logger()
+
+# Suppress Pydantic model namespace warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic._internal._fields")
 
 # Prometheus metrics (conditional)
 if PROMETHEUS_AVAILABLE:
@@ -467,6 +472,15 @@ async def root():
             "Real-time generation monitoring",
             "GDPR/CCPA compliance"
         ]
+    }
+
+@app.get("/cors-debug", tags=["health"])
+async def cors_debug():
+    """Debug endpoint to check CORS configuration"""
+    return {
+        "cors_origins": settings.CORS_ORIGINS,
+        "allowed_hosts": settings.ALLOWED_HOSTS,
+        "environment": settings.ENVIRONMENT
     }
 
 # Store startup time for uptime calculation
