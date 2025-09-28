@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api';
+import { useToast } from '@/components/ui/use-toast';
 
 interface Dataset {
   id: number;
@@ -46,6 +47,7 @@ interface GenerationJob {
 export default function DatasetsPage() {
   const { user, isAuthenticated } = useAuth();
   const router = useRouter();
+  const { toast } = useToast();
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null);
   const [generationJobs, setGenerationJobs] = useState<GenerationJob[]>([]);
@@ -96,9 +98,19 @@ export default function DatasetsPage() {
       setDatasets(prev => [...prev, newDataset]);
       setSelectedFile(null);
       setUploadForm({ name: '', description: '', privacy_level: 'medium' });
+      
+      toast({
+        title: "Dataset uploaded!",
+        description: "Your dataset has been uploaded and is being processed.",
+        variant: "success",
+      });
     } catch (err) {
       console.error('Error uploading dataset:', err);
-      setError('Failed to upload dataset');
+      toast({
+        title: "Upload failed",
+        description: "Failed to upload dataset. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setUploadLoading(false);
     }
@@ -113,9 +125,19 @@ export default function DatasetsPage() {
       if (selectedDataset?.id === datasetId) {
         setSelectedDataset(null);
       }
+      
+      toast({
+        title: "Dataset deleted",
+        description: "The dataset has been deleted successfully.",
+        variant: "success",
+      });
     } catch (err) {
       console.error('Error deleting dataset:', err);
-      setError('Failed to delete dataset');
+      toast({
+        title: "Delete failed",
+        description: "Failed to delete dataset. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -130,9 +152,19 @@ export default function DatasetsPage() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      
+      toast({
+        title: "Download started",
+        description: "Your dataset download has started.",
+        variant: "success",
+      });
     } catch (err) {
       console.error('Error downloading dataset:', err);
-      setError('Failed to download dataset');
+      toast({
+        title: "Download failed",
+        description: "Failed to download dataset. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -144,9 +176,19 @@ export default function DatasetsPage() {
         privacy_level: 'medium'
       });
       setGenerationJobs(prev => [...prev, job]);
+      
+      toast({
+        title: "Generation started!",
+        description: "Synthetic data generation has been started for this dataset.",
+        variant: "success",
+      });
     } catch (err) {
       console.error('Error starting generation:', err);
-      setError('Failed to start generation');
+      toast({
+        title: "Generation failed",
+        description: "Failed to start generation. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -203,20 +245,6 @@ export default function DatasetsPage() {
             </p>
           </div>
 
-          {error && (
-            <div className="mb-6 p-4 bg-red-100 border border-red-300 rounded-lg text-red-700" role="alert" aria-live="assertive" tabIndex={-1}>
-              {error}
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => setError(null)}
-                className="ml-4"
-                aria-label="Dismiss error message"
-              >
-                Dismiss
-              </Button>
-            </div>
-          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Dataset List */}

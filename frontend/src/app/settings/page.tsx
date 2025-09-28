@@ -5,12 +5,12 @@ import { motion } from 'framer-motion';
 import { Header } from '@/components/layout/Header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useToast } from '@/components/ui/use-toast';
 
 const SettingsPage = () => {
   const [activeTab, setActiveTab] = useState('account');
   const [isLoading, setIsLoading] = useState(false);
-  const [successMessage, setSuccessMessage] = useState('');
-  const [errorMessage, setErrorMessage] = useState('');
+  const { toast } = useToast();
 
   const [accountData, setAccountData] = useState({
     full_name: 'John Doe',
@@ -70,11 +70,17 @@ const SettingsPage = () => {
     try {
       // Simulate API call
       await new Promise(resolve => setTimeout(resolve, 1000));
-      setSuccessMessage('Account settings updated successfully');
-      setTimeout(() => setSuccessMessage(''), 3000);
+      toast({
+        title: "Account updated!",
+        description: "Your account settings have been updated successfully.",
+        variant: "success",
+      });
     } catch (error) {
-      setErrorMessage('Failed to update account settings');
-      setTimeout(() => setErrorMessage(''), 3000);
+      toast({
+        title: "Update failed",
+        description: "Failed to update account settings. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -93,11 +99,17 @@ const SettingsPage = () => {
         permissions: ['read']
       };
       setApiKeys([...apiKeys, newKey]);
-      setSuccessMessage('New API key generated successfully');
-      setTimeout(() => setSuccessMessage(''), 3000);
+      toast({
+        title: "API key generated!",
+        description: "Your new API key has been generated successfully.",
+        variant: "success",
+      });
     } catch (error) {
-      setErrorMessage('Failed to generate API key');
-      setTimeout(() => setErrorMessage(''), 3000);
+      toast({
+        title: "Generation failed",
+        description: "Failed to generate API key. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -105,19 +117,28 @@ const SettingsPage = () => {
 
   const revokeApiKey = (keyId: number) => {
     setApiKeys(apiKeys.filter(key => key.id !== keyId));
-    setSuccessMessage('API key revoked successfully');
-    setTimeout(() => setSuccessMessage(''), 3000);
+    toast({
+      title: "API key revoked",
+      description: "The API key has been revoked successfully.",
+      variant: "success",
+    });
   };
 
   const updateNotifications = async () => {
     setIsLoading(true);
     try {
       await new Promise(resolve => setTimeout(resolve, 1000));
-      setSuccessMessage('Notification preferences updated');
-      setTimeout(() => setSuccessMessage(''), 3000);
+      toast({
+        title: "Notifications updated!",
+        description: "Your notification preferences have been updated.",
+        variant: "success",
+      });
     } catch (error) {
-      setErrorMessage('Failed to update notifications');
-      setTimeout(() => setErrorMessage(''), 3000);
+      toast({
+        title: "Update failed",
+        description: "Failed to update notification preferences. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -136,17 +157,6 @@ const SettingsPage = () => {
             </p>
           </div>
 
-          {/* Messages */}
-          {successMessage && (
-            <div className="mb-6 p-4 bg-green-100 border border-green-300 rounded-lg text-green-700">
-              {successMessage}
-            </div>
-          )}
-          {errorMessage && (
-            <div className="mb-6 p-4 bg-red-100 border border-red-300 rounded-lg text-red-700">
-              {errorMessage}
-            </div>
-          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
             {/* Sidebar */}

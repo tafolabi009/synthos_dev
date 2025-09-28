@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api';
+import { useToast } from '@/components/ui/use-toast';
 
 interface CustomModel {
   id: number;
@@ -46,6 +47,7 @@ interface TierLimits {
 export default function CustomModelsPage() {
   const { user, isAuthenticated } = useAuth();
   const router = useRouter();
+  const { toast } = useToast();
   const [models, setModels] = useState<CustomModel[]>([]);
   const [tierLimits, setTierLimits] = useState<TierLimits | null>(null);
   const [loading, setLoading] = useState(true);
@@ -113,9 +115,19 @@ export default function CustomModelsPage() {
       setModels(prev => [...prev, response]);
       setSelectedFile(null);
       setUploadForm({ name: '', description: '', model_type: 'tensorflow' });
+      
+      toast({
+        title: "Model uploaded!",
+        description: "Your custom model has been uploaded and is being processed.",
+        variant: "success",
+      });
     } catch (err) {
       console.error('Error uploading model:', err);
-      setError('Failed to upload model');
+      toast({
+        title: "Upload failed",
+        description: "Failed to upload model. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setUploadLoading(false);
     }
@@ -125,9 +137,19 @@ export default function CustomModelsPage() {
     try {
       await apiClient.deleteCustomModel(modelId);
       setModels(prev => prev.filter(m => m.id !== modelId));
+      
+      toast({
+        title: "Model deleted",
+        description: "The custom model has been deleted successfully.",
+        variant: "success",
+      });
     } catch (err) {
       console.error('Error deleting model:', err);
-      setError('Failed to delete model');
+      toast({
+        title: "Delete failed",
+        description: "Failed to delete model. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -194,11 +216,6 @@ export default function CustomModelsPage() {
             </p>
           </div>
 
-          {error && (
-            <div className="mb-6 p-4 bg-red-100 border border-red-300 rounded-lg text-red-700">
-              {error}
-            </div>
-          )}
 
           {/* Tier Limits */}
           {tierLimits && (
