@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { Header } from '@/components/layout/Header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useToast } from '@/components/ui/use-toast';
 
 const ContactPage = () => {
   const [formData, setFormData] = useState({
@@ -13,6 +14,8 @@ const ContactPage = () => {
     company: '',
     message: ''
   });
+  const [isLoading, setIsLoading] = useState(false);
+  const { toast } = useToast();
 
   const contactMethods = [
     {
@@ -45,9 +48,36 @@ const ContactPage = () => {
     }
   ];
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Handle form submission (no console logs in production)
+    setIsLoading(true);
+    
+    try {
+      // Simulate API call - replace with actual API call
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      toast({
+        title: "Message sent!",
+        description: "Thank you for your message. We'll get back to you within 24 hours.",
+        variant: "success",
+      });
+      
+      // Reset form
+      setFormData({
+        name: '',
+        email: '',
+        company: '',
+        message: ''
+      });
+    } catch (error) {
+      toast({
+        title: "Failed to send message",
+        description: "Please try again or contact us directly at support@synthos.dev.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -188,10 +218,18 @@ const ContactPage = () => {
                       
                       <Button 
                         type="submit"
+                        disabled={isLoading}
                         className="w-full bg-gradient-to-r from-primary to-blue-600 hover:from-primary/90 hover:to-blue-600/90"
                         size="lg"
                       >
-                        Send Message
+                        {isLoading ? (
+                          <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            Sending...
+                          </div>
+                        ) : (
+                          'Send Message'
+                        )}
                       </Button>
                     </form>
                   </CardContent>
