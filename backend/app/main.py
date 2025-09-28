@@ -88,6 +88,39 @@ if not settings.MVP_MODE and settings.ENABLE_SENTRY and settings.SENTRY_DSN:
         send_default_pii=False,  # Privacy compliance
     )
 
+# Custom CORS middleware for better control
+class CustomCORSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Handle preflight requests
+        if request.method == "OPTIONS":
+            response = Response()
+            origin = request.headers.get("origin")
+            
+            # Check if origin is allowed
+            if origin in settings.CORS_ORIGINS or "*" in settings.CORS_ORIGINS:
+                response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD"
+                response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, X-Correlation-ID, X-Forwarded-For, X-Real-IP, User-Agent, Origin, Referer, Cache-Control, Pragma"
+                response.headers["Access-Control-Allow-Credentials"] = "true"
+                response.headers["Access-Control-Max-Age"] = "86400"
+                response.headers["Access-Control-Expose-Headers"] = "X-Total-Count, X-Response-Time, X-Correlation-ID"
+            else:
+                response.headers["Access-Control-Allow-Origin"] = "null"
+            
+            return response
+        
+        # Process the request
+        response = await call_next(request)
+        
+        # Add CORS headers to all responses
+        origin = request.headers.get("origin")
+        if origin in settings.CORS_ORIGINS or "*" in settings.CORS_ORIGINS:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Expose-Headers"] = "X-Total-Count, X-Response-Time, X-Correlation-ID"
+        
+        return response
+
 # Enhanced Security headers middleware with MITM protection
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -290,10 +323,10 @@ app = FastAPI(
 )
 
 # Security middleware (order matters!)
-# Temporarily disable security middleware for debugging
-# app.add_middleware(SecurityHeadersMiddleware)
-# app.add_middleware(HTTPSEnforcementMiddleware) # Add HTTPS enforcement middleware
-# app.add_middleware(MetricsMiddleware)
+# Add custom CORS middleware first
+app.add_middleware(CustomCORSMiddleware)
+
+# Session middleware
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SECRET_KEY,
@@ -308,16 +341,10 @@ app.add_middleware(
     allowed_hosts=settings.ALLOWED_HOSTS + ["127.0.0.1", "localhost"],
 )
 
-# Enhanced CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=["*"],
-    expose_headers=["X-Total-Count", "X-Response-Time"],
-    max_age=86400,  # Cache preflight for 24 hours
-)
+# Temporarily disable security middleware for debugging
+# app.add_middleware(SecurityHeadersMiddleware)
+# app.add_middleware(HTTPSEnforcementMiddleware) # Add HTTPS enforcement middleware
+# app.add_middleware(MetricsMiddleware)
 
 # Rate limiting
 if limiter is not None:
@@ -401,7 +428,8 @@ async def health_check(request: Request):
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
             checks["database"] = "healthy"
-    except Exception:
+    except Exception as e:
+        logger.warning("Database health check failed", error=str(e))
         checks["database"] = "unhealthy"
     
     try:
@@ -412,7 +440,8 @@ async def health_check(request: Request):
             checks["redis"] = "healthy"
         else:
             checks["redis"] = "disabled"
-    except Exception:
+    except Exception as e:
+        logger.warning("Redis health check failed", error=str(e))
         checks["redis"] = "unhealthy"
     
     try:
@@ -421,7 +450,8 @@ async def health_check(request: Request):
         agent = AdvancedClaudeAgent()
         await agent.health_check()
         checks["ai_service"] = "healthy"
-    except Exception:
+    except Exception as e:
+        logger.warning("AI service health check failed", error=str(e))
         checks["ai_service"] = "unhealthy"
     
     overall_status = "healthy" if all(
@@ -451,6 +481,18 @@ async def liveness_check(request: Request):
     if limiter and not settings.MVP_MODE:
         limiter.limit("10/minute")(liveness_check)
     return {"status": "alive"}
+
+@app.get("/health/simple", tags=["health"])
+async def simple_health_check():
+    """Simple health check without dependencies"""
+    return {
+        "status": "healthy",
+        "service": "synthos-api",
+        "version": "1.0.0",
+        "environment": settings.ENVIRONMENT,
+        "timestamp": time.time(),
+        "cors_origins": settings.CORS_ORIGINS
+    }
 
 @app.get("/cors-debug", tags=["debug"])
 async def cors_debug():
@@ -482,6 +524,11 @@ async def root():
             "GDPR/CCPA compliance"
         ]
     }
+
+@app.options("/{path:path}")
+async def options_handler(path: str):
+    """Handle CORS preflight requests"""
+    return {"message": "OK"}
 
 @app.get("/cors-debug", tags=["health"])
 async def cors_debug():

@@ -189,6 +189,22 @@ class AuditLogger:
             metadata=metadata or {},
             event_type="privacy_event",
         )
+    
+    def error(self, msg: str, **kwargs: Any) -> None:
+        """Log error message with context"""
+        self.logger.error(msg, **kwargs)
+    
+    def info(self, msg: str, **kwargs: Any) -> None:
+        """Log info message with context"""
+        self.logger.info(msg, **kwargs)
+    
+    def warning(self, msg: str, **kwargs: Any) -> None:
+        """Log warning message with context"""
+        self.logger.warning(msg, **kwargs)
+    
+    def debug(self, msg: str, **kwargs: Any) -> None:
+        """Log debug message with context"""
+        self.logger.debug(msg, **kwargs)
 
 
 # Global audit logger instance
