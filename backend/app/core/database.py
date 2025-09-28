@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from contextlib import asynccontextmanager
+from fastapi import HTTPException
 import structlog
 
 from app.core.config import settings
@@ -57,14 +58,18 @@ def _make_connector_sync_creator():
             import urllib.parse
             password = urllib.parse.quote_plus(password)
         
-        return connector.connect(
-            settings.CLOUDSQL_INSTANCE,
-            "pg8000",
-            user=settings.DB_USER,
-            password=password,
-            db=settings.DB_NAME,
-            ip_type=IPTypes.PUBLIC,
-        )
+        try:
+            return connector.connect(
+                settings.CLOUDSQL_INSTANCE,
+                "pg8000",
+                user=settings.DB_USER,
+                password=password,
+                db=settings.DB_NAME,
+                ip_type=IPTypes.PUBLIC,
+            )
+        except Exception as e:
+            logger.error("Cloud SQL Connector connection failed", error=str(e))
+            raise
 
     return getconn
 
@@ -84,14 +89,18 @@ def _make_connector_async_creator():
             import urllib.parse
             password = urllib.parse.quote_plus(password)
         
-        return await connector.connect_async(
-            settings.CLOUDSQL_INSTANCE,
-            "asyncpg",
-            user=settings.DB_USER,
-            password=password,
-            db=settings.DB_NAME,
-            ip_type=IPTypes.PUBLIC,
-        )
+        try:
+            return await connector.connect_async(
+                settings.CLOUDSQL_INSTANCE,
+                "asyncpg",
+                user=settings.DB_USER,
+                password=password,
+                db=settings.DB_NAME,
+                ip_type=IPTypes.PUBLIC,
+            )
+        except Exception as e:
+            logger.error("Cloud SQL Connector async connection failed", error=str(e))
+            raise
 
     return getconn
 
@@ -99,28 +108,36 @@ def _make_connector_async_creator():
 # Decide engine strategy
 use_connector = bool(settings.USE_CLOUD_SQL_CONNECTOR and settings.CLOUDSQL_INSTANCE and settings.DB_USER and settings.DB_PASSWORD and settings.DB_NAME)
 
-if use_connector and Connector:
-    # Sync engine via connector (pg8000)
-    engine = create_engine(
-        "postgresql+pg8000://",  # empty URL; use creator
-        creator=_make_connector_sync_creator(),
-        poolclass=QueuePool,
-        pool_size=settings.DATABASE_POOL_SIZE,
-        max_overflow=settings.DATABASE_MAX_OVERFLOW,
-        pool_pre_ping=True,
-        echo=settings.DEBUG,
-    )
+# Try Cloud SQL Connector first, fallback to direct connection
+try:
+    if use_connector and Connector:
+        logger.info("Attempting to use Cloud SQL Connector")
+        # Sync engine via connector (pg8000)
+        engine = create_engine(
+            "postgresql+pg8000://",  # empty URL; use creator
+            creator=_make_connector_sync_creator(),
+            poolclass=QueuePool,
+            pool_size=settings.DATABASE_POOL_SIZE,
+            max_overflow=settings.DATABASE_MAX_OVERFLOW,
+            pool_pre_ping=True,
+            echo=settings.DEBUG,
+        )
 
-    # Async engine via connector (asyncpg)
-    async_engine = create_async_engine(
-        "postgresql+asyncpg://",
-        creator=_make_connector_async_creator(),
-        pool_size=settings.DATABASE_POOL_SIZE,
-        max_overflow=settings.DATABASE_MAX_OVERFLOW,
-        pool_pre_ping=True,
-        echo=settings.DEBUG,
-    )
-else:
+        # Async engine via connector (asyncpg)
+        async_engine = create_async_engine(
+            "postgresql+asyncpg://",
+            creator=_make_connector_async_creator(),
+            pool_size=settings.DATABASE_POOL_SIZE,
+            max_overflow=settings.DATABASE_MAX_OVERFLOW,
+            pool_pre_ping=True,
+            echo=settings.DEBUG,
+        )
+        logger.info("Cloud SQL Connector engines created successfully")
+    else:
+        raise Exception("Cloud SQL Connector not configured")
+        
+except Exception as e:
+    logger.warning("Cloud SQL Connector failed, falling back to direct connection", error=str(e))
     # Fallback to raw DATABASE_URL
     engine = create_engine(
         get_sync_database_url(settings.DATABASE_CONNECTION_URL),
@@ -139,6 +156,7 @@ else:
         pool_pre_ping=True,
         echo=settings.DEBUG,
     )
+    logger.info("Direct connection engines created successfully")
 
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -170,11 +188,23 @@ async def create_tables():
 
 def get_db():
     """Database dependency for FastAPI"""
-    db = SessionLocal()
+    db = None
     try:
+        db = SessionLocal()
+        # Test the connection with a simple query
+        db.execute(text("SELECT 1"))
         yield db
+    except Exception as e:
+        logger.error("Database connection failed in get_db", error=str(e))
+        if db:
+            db.close()
+        raise HTTPException(
+            status_code=503,
+            detail="Database temporarily unavailable. Please try again later."
+        )
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
 @asynccontextmanager
