@@ -39,6 +39,16 @@ from app.core.database import create_tables
 from app.core.redis import init_redis, get_redis_client
 from app.services.auth import AuthService
 
+# Import all services
+from app.services.analytics_service import AdvancedAnalyticsService
+from app.services.audit_service import ComprehensiveAuditService
+from app.services.payment_service import AdvancedPaymentService
+from app.services.webhook_service import AdvancedWebhookService
+from app.services.monitoring_service import ComprehensiveMonitoringService
+from app.services.advanced_storage_service import AdvancedStorageService
+from app.services.custom_model_service import CustomModelService
+from app.security.advanced_security import AdvancedSecuritySystem
+
 # Setup structured logging
 setup_logging()
 logger = structlog.get_logger()
@@ -61,6 +71,7 @@ else:
     REQUEST_COUNT = MockMetric()
     REQUEST_DURATION = MockMetric()
     ACTIVE_CONNECTIONS = MockMetric()
+
 if PROMETHEUS_AVAILABLE:
     AI_GENERATION_DURATION = Histogram('ai_generation_duration_seconds', 'AI generation duration')
     DATA_QUALITY_SCORE = Gauge('data_quality_score', 'Average data quality score')
@@ -68,7 +79,7 @@ else:
     AI_GENERATION_DURATION = MockMetric()
     DATA_QUALITY_SCORE = MockMetric()
 
-# Rate limiting with Redis backend (feature-flagged, disabled in MVP mode)
+# Rate limiting with Redis backend
 limiter = None
 try:
     if not settings.MVP_MODE and settings.ENABLE_RATE_LIMITING and settings.ENABLE_CACHING:
@@ -76,33 +87,31 @@ try:
 except Exception:
     limiter = None
 
-# Sentry integration for error tracking (feature-flagged, disabled in MVP mode)
+# Sentry integration for error tracking
 if not settings.MVP_MODE and settings.ENABLE_SENTRY and settings.SENTRY_DSN:
     sentry_sdk.init(
         dsn=settings.SENTRY_DSN,
         integrations=[FastApiIntegration(auto_enable=True)],
-        traces_sample_rate=0.1,  # Lower sample rate for production
+        traces_sample_rate=0.1,
         profiles_sample_rate=0.1,
         environment=settings.ENVIRONMENT,
         attach_stacktrace=True,
-        send_default_pii=False,  # Privacy compliance
+        send_default_pii=False,
     )
 
-# Custom CORS middleware removed - using standard CORSMiddleware only
-
-# Enhanced Security headers middleware with MITM protection
+# Enhanced Security headers middleware
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         
-        # Core security headers (always applied)
+        # Core security headers
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
         
-        # Content Security Policy - prevents injection attacks
+        # Content Security Policy
         csp_policy = (
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://checkout.paddle.com; "
@@ -120,17 +129,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         
         # HTTPS enforcement headers
         if settings.ENVIRONMENT == "production" or settings.FORCE_HTTPS:
-            # Strict Transport Security with preload
             response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
-            
-            # Expect-CT header for certificate transparency
             response.headers["Expect-CT"] = "max-age=86400, enforce"
             
-            # HTTP Public Key Pinning (if configured)
             if settings.HPKP_PINS:
                 response.headers["Public-Key-Pins"] = f"pin-sha256=\"{settings.HPKP_PINS}\"; max-age=2592000; includeSubDomains"
         
-        # Additional security headers for all environments
+        # Additional security headers
         response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
         response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
@@ -143,38 +148,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             del response.headers["X-Powered-By"]
         
         return response
-
-# HTTPS enforcement middleware for production and staging
-class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        # Skip HTTPS enforcement for health checks and metrics
-        if request.url.path in ["/health", "/health/ready", "/health/live", "/metrics"]:
-            return await call_next(request)
-        
-        # Enforce HTTPS in production and staging environments
-        if settings.ENVIRONMENT in ["production", "staging"] or settings.FORCE_HTTPS:
-            # Check if request is over HTTP
-            forwarded_proto = request.headers.get("x-forwarded-proto", "").lower()
-            scheme = request.url.scheme.lower()
-            
-            if scheme == "http" and forwarded_proto != "https":
-                # Redirect to HTTPS
-                https_url = request.url.replace(scheme="https")
-                return JSONResponse(
-                    status_code=status.HTTP_426_UPGRADE_REQUIRED,
-                    content={
-                        "error": "HTTPS Required",
-                        "message": "This service requires HTTPS for security. Please use HTTPS.",
-                        "upgrade_to": str(https_url)
-                    },
-                    headers={
-                        "Upgrade": "TLS/1.2, HTTP/1.1",
-                        "Connection": "Upgrade",
-                        "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload"
-                    }
-                )
-        
-        return await call_next(request)
 
 # Performance monitoring middleware
 class MetricsMiddleware(BaseHTTPMiddleware):
@@ -202,60 +175,92 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         finally:
             ACTIVE_CONNECTIONS.dec()
 
+# Global services
+analytics_service = None
+audit_service = None
+payment_service = None
+webhook_service = None
+monitoring_service = None
+storage_service = None
+custom_model_service = None
+security_system = None
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events with health checks"""
+    global analytics_service, audit_service, payment_service, webhook_service
+    global monitoring_service, storage_service, custom_model_service, security_system
+    
     # Startup
     logger.info("Starting Synthos platform...")
     
     db_initialized: bool = False
     redis_initialized: bool = False
-    ai_warmup_ok: bool = False
+    services_initialized: bool = False
     
     try:
-        # Initialize database with retry logic
+        # Initialize database
         for attempt in range(3):
             try:
-                # Skip table creation since tables already exist
-                # await create_tables()
+                await create_tables()
                 db_initialized = True
                 break
             except Exception as e:
                 logger.warning(f"Database connection attempt {attempt + 1} failed, retrying...", error=str(e))
                 await asyncio.sleep(2)
-        
 
-        # Initialize Redis with connection pooling (only if caching is enabled)
+        # Initialize Redis
         if settings.ENABLE_CACHING:
-            from app.core.redis import init_redis
-            await init_redis()
+            try:
+                await init_redis()
+                redis_initialized = True
+            except Exception as e:
+                logger.warning("Redis initialization failed; continuing in degraded mode", error=str(e))
 
-        # Initialize Redis with connection pooling (best-effort)
+        # Initialize all services
         try:
-            from app.core.redis import init_redis
-            await init_redis()
-            redis_initialized = True
+            # Analytics Service
+            analytics_service = AdvancedAnalyticsService()
+            await analytics_service.start()
+            
+            # Audit Service
+            audit_service = ComprehensiveAuditService()
+            await audit_service.start()
+            
+            # Payment Service
+            payment_service = AdvancedPaymentService()
+            
+            # Webhook Service
+            webhook_service = AdvancedWebhookService()
+            await webhook_service.start()
+            
+            # Monitoring Service
+            monitoring_service = ComprehensiveMonitoringService()
+            await monitoring_service.start()
+            
+            # Storage Service
+            storage_service = AdvancedStorageService()
+            
+            # Custom Model Service
+            custom_model_service = CustomModelService()
+            
+            # Security System
+            security_system = AdvancedSecuritySystem()
+            await security_system.start()
+            
+            services_initialized = True
+            
         except Exception as e:
-            logger.warning("Redis initialization failed; continuing in degraded mode", error=str(e))
-
-        
-        # Warm up critical services (best-effort)
-        try:
-            auth_service = AuthService()
-            await auth_service.warm_up()
-            ai_warmup_ok = True
-        except Exception as e:
-            logger.warning("Auth/AI warm-up failed; continuing in degraded mode", error=str(e))
+            logger.warning("Service initialization failed; continuing in degraded mode", error=str(e))
         
         logger.info(
             "Synthos platform startup completed",
             db_initialized=db_initialized,
             redis_initialized=redis_initialized,
-            ai_warmup_ok=ai_warmup_ok,
+            services_initialized=services_initialized,
         )
         
     except Exception as e:
-        # In production/staging, do not crash the service; continue in degraded mode
         if settings.ENVIRONMENT in ["production", "staging"]:
             logger.error("Failed to fully start Synthos platform; continuing in degraded mode", error=str(e), exc_info=True)
         else:
@@ -266,12 +271,27 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down Synthos platform...")
+    
+    # Stop all services
+    if security_system:
+        await security_system.stop()
+    if monitoring_service:
+        await monitoring_service.stop()
+    if webhook_service:
+        await webhook_service.stop()
+    if audit_service:
+        await audit_service.stop()
+    if analytics_service:
+        await analytics_service.stop()
+    
+    # Close Redis connection
     redis_client = await get_redis_client()
     if redis_client:
         await redis_client.close()
+    
     logger.info("Synthos platform shutdown complete")
 
-# Create FastAPI application with enhanced configuration
+# Create FastAPI application
 app = FastAPI(
     title="Synthos API",
     description="Enterprise Synthetic Data Platform with Agentive AI",
@@ -287,12 +307,15 @@ app = FastAPI(
         {"name": "auth", "description": "Authentication operations"},
         {"name": "datasets", "description": "Dataset management"},
         {"name": "generation", "description": "Synthetic data generation"},
+        {"name": "analytics", "description": "Analytics and insights"},
+        {"name": "payments", "description": "Payment processing"},
+        {"name": "webhooks", "description": "Webhook management"},
+        {"name": "monitoring", "description": "System monitoring"},
         {"name": "health", "description": "Health check endpoints"},
     ],
 )
 
 # Security middleware (order matters!)
-# Add standard CORS middleware for comprehensive coverage
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -300,22 +323,19 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
     allow_headers=["*"],
     expose_headers=["X-Total-Count", "X-Response-Time", "X-Correlation-ID"],
-    max_age=86400,  # Cache preflight for 24 hours
+    max_age=86400,
 )
-
-# Custom CORS middleware removed to avoid conflicts with standard CORSMiddleware
 
 # Session middleware
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SECRET_KEY,
-    max_age=86400,  # 24 hours
+    max_age=86400,
     same_site="strict" if settings.ENVIRONMENT in ["production", "staging"] else "lax",
     https_only=settings.ENVIRONMENT in ["production", "staging"] or getattr(settings, 'FORCE_HTTPS', False)
 )
 
-# Trusted host middleware with comprehensive host validation
-# Allow all hosts in production to avoid Cloud Run host header issues
+# Trusted host middleware
 if settings.ENVIRONMENT == "production":
     app.add_middleware(
         TrustedHostMiddleware,
@@ -327,17 +347,16 @@ else:
         allowed_hosts=settings.ALLOWED_HOSTS + ["127.0.0.1", "localhost"],
     )
 
-# Temporarily disable security middleware for debugging
-# app.add_middleware(SecurityHeadersMiddleware)
-# app.add_middleware(HTTPSEnforcementMiddleware) # Add HTTPS enforcement middleware
-# app.add_middleware(MetricsMiddleware)
+# Security and performance middleware
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(MetricsMiddleware)
 
 # Rate limiting
 if limiter is not None:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Prometheus metrics endpoint (feature-flagged, disabled in MVP mode)
+# Prometheus metrics endpoint
 if not settings.MVP_MODE and getattr(settings, 'ENABLE_PROMETHEUS', False) and PROMETHEUS_AVAILABLE:
     metrics_app = make_asgi_app()
     app.mount("/metrics", metrics_app)
@@ -404,11 +423,11 @@ async def health_check(request: Request):
         "api": "healthy",
         "database": "unknown",
         "redis": "unknown",
-        "ai_service": "unknown"
+        "services": "unknown"
     }
     
     try:
-        # Database health check - simple connection test
+        # Database health check
         from app.core.database import engine
         from sqlalchemy import text
         with engine.connect() as conn:
@@ -419,7 +438,7 @@ async def health_check(request: Request):
         checks["database"] = "unhealthy"
     
     try:
-        # Redis health check (only if caching is enabled)
+        # Redis health check
         if settings.ENABLE_CACHING:
             redis_client = await get_redis_client()
             await redis_client.ping()
@@ -431,14 +450,18 @@ async def health_check(request: Request):
         checks["redis"] = "unhealthy"
     
     try:
-        # AI service health check
-        from app.agents.claude_agent import AdvancedClaudeAgent
-        agent = AdvancedClaudeAgent()
-        await agent.health_check()
-        checks["ai_service"] = "healthy"
+        # Services health check
+        if monitoring_service:
+            health = await monitoring_service.get_system_health()
+            if health and health.overall_status == "healthy":
+                checks["services"] = "healthy"
+            else:
+                checks["services"] = "degraded"
+        else:
+            checks["services"] = "unknown"
     except Exception as e:
-        logger.warning("AI service health check failed", error=str(e))
-        checks["ai_service"] = "unhealthy"
+        logger.warning("Services health check failed", error=str(e))
+        checks["services"] = "unhealthy"
     
     overall_status = "healthy" if all(
         status == "healthy" for status in checks.values()
@@ -468,27 +491,6 @@ async def liveness_check(request: Request):
         limiter.limit("10/minute")(liveness_check)
     return {"status": "alive"}
 
-@app.get("/health/simple", tags=["health"])
-async def simple_health_check():
-    """Simple health check without dependencies"""
-    return {
-        "status": "healthy",
-        "service": "synthos-api",
-        "version": "1.0.0",
-        "environment": settings.ENVIRONMENT,
-        "timestamp": time.time(),
-        "cors_origins": settings.CORS_ORIGINS
-    }
-
-@app.get("/cors-debug", tags=["debug"])
-async def cors_debug():
-    """Debug CORS configuration"""
-    return {
-        "cors_origins": settings.CORS_ORIGINS,
-        "allowed_hosts": settings.ALLOWED_HOSTS,
-        "environment": settings.ENVIRONMENT
-    }
-
 @app.get("/", tags=["health"])
 async def root():
     """Enhanced root endpoint with API discovery"""
@@ -503,52 +505,17 @@ async def root():
             "v1": "/api/v1"
         },
         "features": [
-            "AI-powered synthetic data generation",
+            "AI-powered synthetic data generation with Claude 4.1 Sonnet",
             "Differential privacy protection", 
             "Enterprise-grade security",
             "Real-time generation monitoring",
-            "GDPR/CCPA compliance"
+            "GDPR/CCPA/HIPAA compliance",
+            "Multi-cloud storage support",
+            "Advanced analytics and insights",
+            "Custom model support",
+            "Payment processing",
+            "Webhook integration"
         ]
-    }
-
-@app.options("/{path:path}")
-async def options_handler(path: str):
-    """Handle CORS preflight requests"""
-    return {"message": "OK"}
-
-@app.get("/cors-debug", tags=["health"])
-async def cors_debug():
-    """Debug endpoint to check CORS configuration"""
-    return {
-        "cors_origins": settings.CORS_ORIGINS,
-        "allowed_hosts": settings.ALLOWED_HOSTS,
-        "environment": settings.ENVIRONMENT
-    }
-
-@app.get("/db-debug", tags=["health"])
-async def db_debug():
-    """Debug endpoint to check database configuration and connection"""
-    from app.core.database import engine, db_manager
-    
-    # Get database configuration (without sensitive data)
-    db_config = {
-        "use_cloud_sql_connector": settings.USE_CLOUD_SQL_CONNECTOR,
-        "cloudsql_instance": settings.CLOUDSQL_INSTANCE,
-        "db_user": settings.DB_USER,
-        "db_name": settings.DB_NAME,
-        "database_url_configured": bool(settings.DATABASE_CONNECTION_URL),
-        "database_url_preview": settings.DATABASE_CONNECTION_URL[:50] + "..." if settings.DATABASE_CONNECTION_URL else None,
-    }
-    
-    # Test database connection
-    connection_test = db_manager.check_connection()
-    db_info = db_manager.get_db_info()
-    
-    return {
-        "database_config": db_config,
-        "connection_test": connection_test,
-        "database_info": db_info,
-        "environment": settings.ENVIRONMENT
     }
 
 # Store startup time for uptime calculation
@@ -561,7 +528,7 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8080,
         reload=settings.ENVIRONMENT == "development",
-        log_config=None,  # Use our structured logging
+        log_config=None,
         workers=1 if settings.ENVIRONMENT == "development" else 4,
-        access_log=False,  # Use our custom logging
-    ) 
+        access_log=False,
+    )
