@@ -39,10 +39,12 @@ logger = get_logger(__name__)
 
 
 class ModelType(Enum):
-    """Supported AI models"""
-    CLAUDE_3_SONNET = "claude-3-sonnet-20240229"
-    CLAUDE_3_OPUS = "claude-3-opus-20240229"
-    CLAUDE_3_HAIKU = "claude-3-haiku-20240307"
+    """Supported AI models - Updated to latest Claude models"""
+    CLAUDE_3_5_SONNET = "claude-3-5-sonnet-20241022"
+    CLAUDE_3_5_HAIKU = "claude-3-5-haiku-20241022"
+    CLAUDE_3_OPUS = "claude-3-opus-20240229"  # Keep for backward compatibility
+    CLAUDE_3_SONNET = "claude-3-sonnet-20240229"  # Keep for backward compatibility
+    CLAUDE_3_HAIKU = "claude-3-haiku-20240307"  # Keep for backward compatibility
     CLAUDE_2 = "claude-2.1"
 
 
@@ -106,10 +108,14 @@ class AdvancedClaudeAgent:
         self.privacy_engine = PrivacyEngine()
         self.cache = {}
         self.model_registry = {
-            ModelType.CLAUDE_3_SONNET: {"context": 200000, "output": 4096},
-            ModelType.CLAUDE_3_OPUS: {"context": 200000, "output": 4096}, 
-            ModelType.CLAUDE_3_HAIKU: {"context": 200000, "output": 4096},
-            ModelType.CLAUDE_2: {"context": 100000, "output": 4096}
+            # Latest Claude 3.5 models (primary)
+            ModelType.CLAUDE_3_5_SONNET: {"context": 200000, "output": 8192, "quality": 0.95, "speed": 0.9, "cost": 0.8},
+            ModelType.CLAUDE_3_5_HAIKU: {"context": 200000, "output": 8192, "quality": 0.88, "speed": 0.95, "cost": 0.9},
+            # Legacy models (backward compatibility)
+            ModelType.CLAUDE_3_SONNET: {"context": 200000, "output": 4096, "quality": 0.92, "speed": 0.85, "cost": 0.85},
+            ModelType.CLAUDE_3_OPUS: {"context": 200000, "output": 4096, "quality": 0.98, "speed": 0.7, "cost": 0.6}, 
+            ModelType.CLAUDE_3_HAIKU: {"context": 200000, "output": 4096, "quality": 0.85, "speed": 0.95, "cost": 0.95},
+            ModelType.CLAUDE_2: {"context": 100000, "output": 4096, "quality": 0.8, "speed": 0.8, "cost": 0.9}
         }
         self.realism_engine = EnhancedRealismEngine()
         # === Advanced optimization and analytics ===

@@ -119,6 +119,46 @@ class MultiModelAgent:
         """Initialize capabilities database for different models"""
         
         return {
+            "claude-3-5-sonnet": ModelCapabilities(
+                provider=AIProvider.CLAUDE,
+                model_name="claude-3-5-sonnet-20241022",
+                strengths=[
+                    "Latest reasoning", "Enhanced accuracy", "Better code understanding",
+                    "Improved business logic", "Advanced domain expertise", "Larger context"
+                ],
+                weaknesses=[
+                    "Higher cost", "Newer model", "Limited availability"
+                ],
+                best_for_domains=[
+                    IndustryDomain.HEALTHCARE, IndustryDomain.FINANCE, 
+                    IndustryDomain.MANUFACTURING, IndustryDomain.GENERAL, IndustryDomain.TECHNOLOGY
+                ],
+                supported_strategies=["premium", "hybrid", "semantic", "reasoning"],
+                cost_per_1k_tokens=0.003,
+                max_context_length=200000,
+                generation_speed="fast",
+                accuracy_rating=0.98
+            ),
+            "claude-3-5-haiku": ModelCapabilities(
+                provider=AIProvider.CLAUDE,
+                model_name="claude-3-5-haiku-20241022",
+                strengths=[
+                    "Fast generation", "Cost effective", "Good quality",
+                    "Quick responses", "Efficient processing"
+                ],
+                weaknesses=[
+                    "Lower accuracy than Sonnet", "Simpler reasoning"
+                ],
+                best_for_domains=[
+                    IndustryDomain.GENERAL, IndustryDomain.RETAIL,
+                    IndustryDomain.AUTOMOTIVE, IndustryDomain.ENERGY
+                ],
+                supported_strategies=["fast", "volume", "general"],
+                cost_per_1k_tokens=0.00025,
+                max_context_length=200000,
+                generation_speed="very_fast",
+                accuracy_rating=0.90
+            ),
             "claude-3-sonnet": ModelCapabilities(
                 provider=AIProvider.CLAUDE,
                 model_name="claude-3-sonnet-20240229",
@@ -286,75 +326,75 @@ class MultiModelAgent:
             "strategy": "single_model",
             "custom_models": custom_models
         }
-        # Enterprise: Use Opus for complex, GPT-4-turbo for simple, ensemble for critical
+        # Enterprise: Use Claude 3.5 Sonnet for complex, Claude 3.5 Haiku for simple, ensemble for critical
         if user.subscription_tier == SubscriptionTier.ENTERPRISE:
             if custom_models and domain in [IndustryDomain.HEALTHCARE, IndustryDomain.FINANCE]:
                 strategy.update({
-                    "models": ["claude-3-opus", custom_models[0]["name"]],
+                    "models": ["claude-3-5-sonnet", custom_models[0]["name"]],
                     "use_ensemble": True,
                     "strategy": "enterprise_ensemble",
                     "voting": "consensus"
                 })
             elif complexity == "high":
                 strategy.update({
-                    "models": ["claude-3-opus"],
+                    "models": ["claude-3-5-sonnet"],
                     "use_ensemble": False,
                     "strategy": "enterprise_premium",
-                    "primary": "claude-3-opus"
+                    "primary": "claude-3-5-sonnet"
                 })
             else:
                 strategy.update({
-                    "models": ["gpt-4-turbo"],
+                    "models": ["claude-3-5-haiku"],
                     "use_ensemble": False,
                     "strategy": "enterprise_cost_opt",
-                    "primary": "gpt-4-turbo"
+                    "primary": "claude-3-5-haiku"
                 })
-        # Growth: Use GPT-4-turbo for most, Claude for complex
+        # Growth: Use Claude 3.5 Haiku for most, Claude 3.5 Sonnet for complex
         elif user.subscription_tier == SubscriptionTier.GROWTH:
             if custom_models:
                 strategy.update({
-                    "models": ["gpt-4-turbo", custom_models[0]["name"]],
+                    "models": ["claude-3-5-haiku", custom_models[0]["name"]],
                     "use_ensemble": False,
                     "strategy": "growth_custom",
-                    "primary": "gpt-4-turbo"
+                    "primary": "claude-3-5-haiku"
                 })
             elif complexity == "high":
                 strategy.update({
-                    "models": ["claude-3-sonnet"],
+                    "models": ["claude-3-5-sonnet"],
                     "use_ensemble": False,
                     "strategy": "growth_complex",
-                    "primary": "claude-3-sonnet"
+                    "primary": "claude-3-5-sonnet"
                 })
             else:
                 strategy.update({
-                    "models": ["gpt-4-turbo"],
+                    "models": ["claude-3-5-haiku"],
                     "use_ensemble": False,
                     "strategy": "growth_fast",
-                    "primary": "gpt-4-turbo"
+                    "primary": "claude-3-5-haiku"
                 })
-        # Professional: Use GPT-3.5 for large/simple, Claude for small/complex
+        # Professional: Use Claude 3.5 Haiku for large/simple, Claude 3.5 Sonnet for small/complex
         elif user.subscription_tier == SubscriptionTier.PROFESSIONAL:
             if config.rows > 50000 or complexity == "low":
                 strategy.update({
-                    "models": ["gpt-3.5-turbo", "claude-3-sonnet"],
+                    "models": ["claude-3-5-haiku"],
                     "use_ensemble": False,
                     "strategy": "professional_speed",
-                    "primary": "gpt-3.5-turbo"
+                    "primary": "claude-3-5-haiku"
                 })
             else:
                 strategy.update({
-                    "models": ["claude-3-sonnet", "gpt-3.5-turbo"],
+                    "models": ["claude-3-5-sonnet"],
                     "use_ensemble": False,
                     "strategy": "professional_balanced",
-                    "primary": "claude-3-sonnet"
+                    "primary": "claude-3-5-sonnet"
                 })
-        # Starter/Free: Use Claude Sonnet only
+        # Starter/Free: Use Claude 3.5 Haiku for cost efficiency
         else:
             strategy.update({
-                "models": ["claude-3-sonnet"],
+                "models": ["claude-3-5-haiku"],
                 "use_ensemble": False,
                 "strategy": "single_model",
-                "primary": "claude-3-sonnet"
+                "primary": "claude-3-5-haiku"
             })
         return strategy
     
@@ -443,10 +483,16 @@ class MultiModelAgent:
         """Generate using Claude models"""
         
         # Update config to use specified Claude model
-        model_type = ModelType.CLAUDE_3_SONNET
-        if "opus" in model_name:
+        model_type = ModelType.CLAUDE_3_5_SONNET  # Default to latest
+        if "claude-3-5-sonnet" in model_name:
+            model_type = ModelType.CLAUDE_3_5_SONNET
+        elif "claude-3-5-haiku" in model_name:
+            model_type = ModelType.CLAUDE_3_5_HAIKU
+        elif "opus" in model_name:
             model_type = ModelType.CLAUDE_3_OPUS
-        elif "haiku" in model_name:
+        elif "claude-3-sonnet" in model_name:
+            model_type = ModelType.CLAUDE_3_SONNET
+        elif "claude-3-haiku" in model_name:
             model_type = ModelType.CLAUDE_3_HAIKU
         
         config.model_type = model_type
