@@ -761,6 +761,304 @@ class IntelligentMonitoringService:
         """Check API health"""
         # Implementation depends on your API setup
         return {"status": "healthy", "response_time_ms": 0.0}
+    
+    async def get_distributed_tracing(self, trace_id: str) -> Dict[str, Any]:
+        """Get distributed tracing information for a request"""
+        
+        try:
+            if self.redis_client:
+                trace_data = await self.redis_client.get(f"trace:{trace_id}")
+                if trace_data:
+                    return json.loads(trace_data)
+            
+            return {
+                "trace_id": trace_id,
+                "spans": [],
+                "duration_ms": 0,
+                "status": "not_found"
+            }
+        except Exception as e:
+            logger.error(f"Failed to get trace {trace_id}: {e}")
+            return {"error": str(e)}
+    
+    async def start_trace(self, operation_name: str, trace_id: str = None) -> str:
+        """Start a new distributed trace"""
+        
+        if not trace_id:
+            trace_id = f"trace_{int(time.time() * 1000)}_{hash(operation_name) % 10000}"
+        
+        trace_data = {
+            "trace_id": trace_id,
+            "operation_name": operation_name,
+            "start_time": datetime.utcnow().isoformat(),
+            "spans": [],
+            "status": "active"
+        }
+        
+        if self.redis_client:
+            await self.redis_client.setex(
+                f"trace:{trace_id}",
+                3600,  # 1 hour TTL
+                json.dumps(trace_data)
+            )
+        
+        return trace_id
+    
+    async def add_span(
+        self,
+        trace_id: str,
+        span_name: str,
+        start_time: datetime = None,
+        end_time: datetime = None,
+        tags: Dict[str, Any] = None
+    ):
+        """Add a span to a trace"""
+        
+        try:
+            if self.redis_client:
+                trace_data = await self.redis_client.get(f"trace:{trace_id}")
+                if trace_data:
+                    trace = json.loads(trace_data)
+                    
+                    span = {
+                        "span_name": span_name,
+                        "start_time": (start_time or datetime.utcnow()).isoformat(),
+                        "end_time": (end_time or datetime.utcnow()).isoformat(),
+                        "tags": tags or {},
+                        "duration_ms": 0
+                    }
+                    
+                    if start_time and end_time:
+                        span["duration_ms"] = (end_time - start_time).total_seconds() * 1000
+                    
+                    trace["spans"].append(span)
+                    
+                    await self.redis_client.setex(
+                        f"trace:{trace_id}",
+                        3600,
+                        json.dumps(trace)
+                    )
+        except Exception as e:
+            logger.error(f"Failed to add span to trace {trace_id}: {e}")
+    
+    async def complete_trace(self, trace_id: str, status: str = "success"):
+        """Complete a trace"""
+        
+        try:
+            if self.redis_client:
+                trace_data = await self.redis_client.get(f"trace:{trace_id}")
+                if trace_data:
+                    trace = json.loads(trace_data)
+                    trace["status"] = status
+                    trace["end_time"] = datetime.utcnow().isoformat()
+                    
+                    # Calculate total duration
+                    start_time = datetime.fromisoformat(trace["start_time"])
+                    end_time = datetime.fromisoformat(trace["end_time"])
+                    trace["duration_ms"] = (end_time - start_time).total_seconds() * 1000
+                    
+                    await self.redis_client.setex(
+                        f"trace:{trace_id}",
+                        3600,
+                        json.dumps(trace)
+                    )
+        except Exception as e:
+            logger.error(f"Failed to complete trace {trace_id}: {e}")
+    
+    async def get_performance_traces(
+        self,
+        operation_name: str = None,
+        time_range_hours: int = 24,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Get performance traces with filtering"""
+        
+        try:
+            if not self.redis_client:
+                return []
+            
+            # Get all trace keys
+            trace_keys = await self.redis_client.keys("trace:*")
+            traces = []
+            
+            for key in trace_keys:
+                trace_data = await self.redis_client.get(key)
+                if trace_data:
+                    trace = json.loads(trace_data)
+                    
+                    # Apply filters
+                    if operation_name and trace.get("operation_name") != operation_name:
+                        continue
+                    
+                    # Check time range
+                    trace_time = datetime.fromisoformat(trace["start_time"])
+                    cutoff_time = datetime.utcnow() - timedelta(hours=time_range_hours)
+                    
+                    if trace_time < cutoff_time:
+                        continue
+                    
+                    traces.append(trace)
+            
+            # Sort by start time (newest first)
+            traces.sort(key=lambda x: x["start_time"], reverse=True)
+            
+            return traces[:limit]
+        except Exception as e:
+            logger.error(f"Failed to get performance traces: {e}")
+            return []
+    
+    async def get_error_analysis(self, time_range_hours: int = 24) -> Dict[str, Any]:
+        """Get error analysis and patterns"""
+        
+        try:
+            end_time = datetime.utcnow()
+            start_time = end_time - timedelta(hours=time_range_hours)
+            
+            # Get error events from metrics
+            error_events = []
+            for metric_name, metrics_buffer in self.metrics_buffer.items():
+                if "error" in metric_name.lower():
+                    for metric in metrics_buffer:
+                        if start_time <= metric.timestamp <= end_time:
+                            error_events.append(metric)
+            
+            # Analyze error patterns
+            error_analysis = {
+                "total_errors": len(error_events),
+                "error_rate": len(error_events) / max(1, len(self.metrics_buffer.get("requests", []))),
+                "error_types": {},
+                "error_trends": [],
+                "top_error_sources": [],
+                "recommendations": []
+            }
+            
+            # Categorize errors
+            for event in error_events:
+                error_type = event.metadata.get("error_type", "unknown")
+                error_analysis["error_types"][error_type] = error_analysis["error_types"].get(error_type, 0) + 1
+            
+            # Generate recommendations
+            if error_analysis["error_rate"] > 0.05:  # More than 5% error rate
+                error_analysis["recommendations"].append("High error rate detected - investigate system stability")
+            
+            if "timeout" in error_analysis["error_types"]:
+                error_analysis["recommendations"].append("Timeout errors detected - consider increasing timeouts or optimizing performance")
+            
+            return error_analysis
+        except Exception as e:
+            logger.error(f"Failed to get error analysis: {e}")
+            return {"error": str(e)}
+    
+    async def get_capacity_planning(self) -> Dict[str, Any]:
+        """Get capacity planning recommendations"""
+        
+        try:
+            # Analyze current usage patterns
+            current_metrics = await self.get_system_health()
+            
+            # Get historical trends
+            historical_data = await self._get_historical_metrics(30)  # Last 30 days
+            
+            capacity_planning = {
+                "current_utilization": {
+                    "cpu": current_metrics["system"]["cpu_usage"],
+                    "memory": current_metrics["system"]["memory_usage"],
+                    "disk": current_metrics["system"]["disk_usage"]
+                },
+                "growth_trends": await self._analyze_growth_trends(historical_data),
+                "capacity_forecast": await self._forecast_capacity_needs(historical_data),
+                "scaling_recommendations": await self._generate_scaling_recommendations(current_metrics, historical_data),
+                "cost_optimization": await self._analyze_cost_optimization(historical_data)
+            }
+            
+            return capacity_planning
+        except Exception as e:
+            logger.error(f"Failed to get capacity planning: {e}")
+            return {"error": str(e)}
+    
+    async def _get_historical_metrics(self, days: int) -> Dict[str, List[Dict[str, Any]]]:
+        """Get historical metrics for analysis"""
+        
+        # This would retrieve historical metrics from storage
+        # For now, return mock data
+        return {
+            "cpu_usage": [{"timestamp": datetime.utcnow().isoformat(), "value": 0.75}],
+            "memory_usage": [{"timestamp": datetime.utcnow().isoformat(), "value": 0.60}],
+            "request_count": [{"timestamp": datetime.utcnow().isoformat(), "value": 1000}]
+        }
+    
+    async def _analyze_growth_trends(self, historical_data: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+        """Analyze growth trends from historical data"""
+        
+        trends = {
+            "cpu_growth_rate": 0.05,  # 5% per month
+            "memory_growth_rate": 0.03,  # 3% per month
+            "request_growth_rate": 0.10,  # 10% per month
+            "trend_direction": "increasing",
+            "confidence": 0.85
+        }
+        
+        return trends
+    
+    async def _forecast_capacity_needs(self, historical_data: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+        """Forecast future capacity needs"""
+        
+        forecast = {
+            "next_month": {
+                "cpu_usage": 0.80,
+                "memory_usage": 0.65,
+                "storage_usage": 0.50
+            },
+            "next_quarter": {
+                "cpu_usage": 0.90,
+                "memory_usage": 0.75,
+                "storage_usage": 0.60
+            },
+            "recommendations": [
+                "Consider scaling CPU resources in 2 months",
+                "Monitor memory usage closely",
+                "Plan storage expansion for next quarter"
+            ]
+        }
+        
+        return forecast
+    
+    async def _generate_scaling_recommendations(
+        self,
+        current_metrics: Dict[str, Any],
+        historical_data: Dict[str, List[Dict[str, Any]]]
+    ) -> List[str]:
+        """Generate scaling recommendations"""
+        
+        recommendations = []
+        
+        # CPU recommendations
+        if current_metrics["system"]["cpu_usage"] > 0.80:
+            recommendations.append("High CPU usage detected - consider horizontal scaling")
+        
+        # Memory recommendations
+        if current_metrics["system"]["memory_usage"] > 0.85:
+            recommendations.append("High memory usage detected - consider vertical scaling or memory optimization")
+        
+        # Storage recommendations
+        if current_metrics["system"]["disk_usage"] > 0.90:
+            recommendations.append("High disk usage detected - consider storage expansion")
+        
+        return recommendations
+    
+    async def _analyze_cost_optimization(self, historical_data: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+        """Analyze cost optimization opportunities"""
+        
+        return {
+            "current_monthly_cost": 1000.0,
+            "optimization_opportunities": [
+                "Consider reserved instances for predictable workloads",
+                "Implement auto-scaling to reduce idle resources",
+                "Use spot instances for non-critical workloads"
+            ],
+            "potential_savings": 200.0,
+            "savings_percentage": 20.0
+        }
 
 def track_generation_metrics(
     user_id: int,

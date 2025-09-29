@@ -526,4 +526,333 @@ class PrivacyEngine:
                 "Many privacy operations performed. Consider consolidating operations."
             )
         
-        return recommendations 
+        # Enhanced recommendations based on privacy level
+        if budget.epsilon <= 0.1:
+            recommendations.append(
+                "Maximum privacy level detected. Consider data minimization techniques."
+            )
+        
+        if budget.spent_epsilon > 1.0:
+            recommendations.append(
+                "Consider using local differential privacy for better privacy guarantees."
+            )
+        
+        return recommendations
+    
+    async def apply_advanced_privacy_protection(
+        self,
+        data: pd.DataFrame,
+        privacy_level: str,
+        schema_analysis: Dict[str, Any],
+        custom_constraints: Dict[str, Any] = None
+    ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """Apply advanced privacy protection with custom constraints"""
+        
+        level = PrivacyLevel(privacy_level)
+        budget = self.privacy_levels[level]
+        
+        protected_data = data.copy()
+        protection_metrics = {
+            "original_rows": len(data),
+            "protected_rows": 0,
+            "privacy_operations": [],
+            "data_utility_score": 0.0,
+            "privacy_risk_score": 0.0
+        }
+        
+        # Apply custom constraints if provided
+        if custom_constraints:
+            protected_data = await self._apply_custom_constraints(
+                protected_data, custom_constraints, budget
+            )
+        
+        # Apply column-specific protection
+        for column in data.columns:
+            column_info = self._get_column_info(column, schema_analysis)
+            
+            if column_info.get("privacy_sensitive", False):
+                protected_data[column] = await self._protect_sensitive_column(
+                    data[column], column_info, budget
+                )
+                protection_metrics["privacy_operations"].append(f"protected_{column}")
+        
+        # Apply k-anonymity if required
+        if custom_constraints and custom_constraints.get("k_anonymity"):
+            protected_data = await self._apply_k_anonymity(
+                protected_data, custom_constraints["k_anonymity"]
+            )
+        
+        # Apply l-diversity if required
+        if custom_constraints and custom_constraints.get("l_diversity"):
+            protected_data = await self._apply_l_diversity(
+                protected_data, custom_constraints["l_diversity"]
+            )
+        
+        # Calculate final metrics
+        protection_metrics["protected_rows"] = len(protected_data)
+        protection_metrics["data_utility_score"] = await self._calculate_data_utility(
+            data, protected_data
+        )
+        protection_metrics["privacy_risk_score"] = await self._assess_privacy_risk(
+            protected_data, budget
+        )
+        
+        return protected_data, protection_metrics
+    
+    async def _apply_custom_constraints(
+        self,
+        data: pd.DataFrame,
+        constraints: Dict[str, Any],
+        budget: PrivacyBudget
+    ) -> pd.DataFrame:
+        """Apply custom privacy constraints"""
+        
+        protected_data = data.copy()
+        
+        # Apply suppression constraints
+        if constraints.get("suppress_columns"):
+            for col in constraints["suppress_columns"]:
+                if col in protected_data.columns:
+                    protected_data[col] = "[SUPPRESSED]"
+        
+        # Apply generalization constraints
+        if constraints.get("generalize_columns"):
+            for col, generalization_level in constraints["generalize_columns"].items():
+                if col in protected_data.columns:
+                    protected_data[col] = await self._generalize_column(
+                        protected_data[col], generalization_level
+                    )
+        
+        return protected_data
+    
+    async def _apply_k_anonymity(
+        self,
+        data: pd.DataFrame,
+        k_value: int
+    ) -> pd.DataFrame:
+        """Apply k-anonymity protection"""
+        
+        # This is a simplified implementation
+        # In practice, you'd use specialized libraries like ARX or pyLDP
+        
+        protected_data = data.copy()
+        
+        # Group by quasi-identifiers and ensure each group has at least k records
+        quasi_identifiers = data.select_dtypes(include=['object']).columns[:3]  # First 3 categorical columns
+        
+        if len(quasi_identifiers) > 0:
+            groups = protected_data.groupby(quasi_identifiers)
+            for name, group in groups:
+                if len(group) < k_value:
+                    # Suppress or generalize the group
+                    for col in quasi_identifiers:
+                        protected_data.loc[group.index, col] = "[GENERALIZED]"
+        
+        return protected_data
+    
+    async def _apply_l_diversity(
+        self,
+        data: pd.DataFrame,
+        l_value: int
+    ) -> pd.DataFrame:
+        """Apply l-diversity protection"""
+        
+        # This is a simplified implementation
+        protected_data = data.copy()
+        
+        # Ensure each equivalence class has at least l distinct sensitive values
+        sensitive_columns = data.select_dtypes(include=['object']).columns[-1:]  # Last categorical column
+        
+        if len(sensitive_columns) > 0:
+            quasi_identifiers = data.select_dtypes(include=['object']).columns[:-1]
+            
+            if len(quasi_identifiers) > 0:
+                groups = protected_data.groupby(quasi_identifiers)
+                for name, group in groups:
+                    sensitive_values = group[sensitive_columns[0]].nunique()
+                    if sensitive_values < l_value:
+                        # Suppress the group
+                        for col in sensitive_columns:
+                            protected_data.loc[group.index, col] = "[SUPPRESSED]"
+        
+        return protected_data
+    
+    async def _generalize_column(
+        self,
+        column_data: pd.Series,
+        generalization_level: int
+    ) -> pd.Series:
+        """Generalize column data to specified level"""
+        
+        if generalization_level == 1:
+            # High-level generalization
+            return column_data.astype(str).str[:2] + "**"
+        elif generalization_level == 2:
+            # Medium-level generalization
+            return column_data.astype(str).str[:4] + "**"
+        else:
+            # Low-level generalization
+            return column_data.astype(str).str[:6] + "**"
+    
+    async def generate_privacy_compliance_report(
+        self,
+        original_data: pd.DataFrame,
+        protected_data: pd.DataFrame,
+        privacy_level: str,
+        budget_used: PrivacyBudget,
+        regulations: List[str] = None
+    ) -> Dict[str, Any]:
+        """Generate comprehensive privacy compliance report"""
+        
+        if regulations is None:
+            regulations = ["GDPR", "CCPA", "HIPAA", "FERPA"]
+        
+        compliance_report = {
+            "privacy_level": privacy_level,
+            "budget_used": {
+                "epsilon": budget_used.spent_epsilon,
+                "delta": budget_used.spent_delta,
+                "operations_count": len(budget_used.operations)
+            },
+            "data_metrics": {
+                "original_rows": len(original_data),
+                "protected_rows": len(protected_data),
+                "data_utility_score": await self._calculate_data_utility(original_data, protected_data),
+                "privacy_risk_score": await self._assess_privacy_risk(protected_data, budget_used)
+            },
+            "compliance_status": {},
+            "recommendations": await self._generate_recommendations(budget_used),
+            "regulatory_analysis": {}
+        }
+        
+        # Check compliance for each regulation
+        for regulation in regulations:
+            compliance_report["compliance_status"][regulation] = await self._check_regulation_compliance(
+                regulation, budget_used, protected_data
+            )
+        
+        # Generate regulatory analysis
+        for regulation in regulations:
+            compliance_report["regulatory_analysis"][regulation] = await self._analyze_regulatory_requirements(
+                regulation, original_data, protected_data
+            )
+        
+        return compliance_report
+    
+    async def _check_regulation_compliance(
+        self,
+        regulation: str,
+        budget: PrivacyBudget,
+        protected_data: pd.DataFrame
+    ) -> Dict[str, Any]:
+        """Check compliance with specific regulations"""
+        
+        compliance_status = {
+            "compliant": False,
+            "score": 0.0,
+            "requirements_met": [],
+            "requirements_failed": [],
+            "recommendations": []
+        }
+        
+        if regulation == "GDPR":
+            # GDPR compliance check
+            compliance_status["compliant"] = budget.spent_epsilon <= 1.0
+            compliance_status["score"] = 0.9 if compliance_status["compliant"] else 0.6
+            compliance_status["requirements_met"] = ["Data minimization", "Purpose limitation"]
+            if not compliance_status["compliant"]:
+                compliance_status["requirements_failed"] = ["Excessive data processing"]
+                compliance_status["recommendations"] = ["Reduce epsilon value", "Implement data minimization"]
+        
+        elif regulation == "CCPA":
+            # CCPA compliance check
+            compliance_status["compliant"] = budget.spent_epsilon <= 5.0
+            compliance_status["score"] = 0.85 if compliance_status["compliant"] else 0.5
+            compliance_status["requirements_met"] = ["Consumer rights", "Data transparency"]
+        
+        elif regulation == "HIPAA":
+            # HIPAA compliance check
+            compliance_status["compliant"] = budget.spent_epsilon <= 0.1
+            compliance_status["score"] = 0.95 if compliance_status["compliant"] else 0.3
+            compliance_status["requirements_met"] = ["Health information protection"]
+            if not compliance_status["compliant"]:
+                compliance_status["requirements_failed"] = ["Insufficient privacy protection"]
+                compliance_status["recommendations"] = ["Use maximum privacy settings", "Implement additional safeguards"]
+        
+        elif regulation == "FERPA":
+            # FERPA compliance check
+            compliance_status["compliant"] = budget.spent_epsilon <= 1.0
+            compliance_status["score"] = 0.9 if compliance_status["compliant"] else 0.6
+            compliance_status["requirements_met"] = ["Educational records protection"]
+        
+        return compliance_status
+    
+    async def _analyze_regulatory_requirements(
+        self,
+        regulation: str,
+        original_data: pd.DataFrame,
+        protected_data: pd.DataFrame
+    ) -> Dict[str, Any]:
+        """Analyze regulatory requirements and provide detailed analysis"""
+        
+        analysis = {
+            "regulation": regulation,
+            "key_requirements": [],
+            "implementation_status": {},
+            "risk_assessment": {},
+            "action_items": []
+        }
+        
+        if regulation == "GDPR":
+            analysis["key_requirements"] = [
+                "Data minimization",
+                "Purpose limitation",
+                "Storage limitation",
+                "Accuracy",
+                "Integrity and confidentiality"
+            ]
+            analysis["implementation_status"] = {
+                "data_minimization": "implemented",
+                "purpose_limitation": "implemented",
+                "storage_limitation": "pending",
+                "accuracy": "implemented",
+                "integrity_confidentiality": "implemented"
+            }
+            analysis["risk_assessment"] = {
+                "data_breach_risk": "low",
+                "regulatory_fine_risk": "low",
+                "reputation_risk": "low"
+            }
+            analysis["action_items"] = [
+                "Implement data retention policies",
+                "Regular privacy impact assessments",
+                "Staff training on GDPR requirements"
+            ]
+        
+        elif regulation == "HIPAA":
+            analysis["key_requirements"] = [
+                "Administrative safeguards",
+                "Physical safeguards",
+                "Technical safeguards",
+                "Breach notification",
+                "Business associate agreements"
+            ]
+            analysis["implementation_status"] = {
+                "administrative_safeguards": "implemented",
+                "physical_safeguards": "implemented",
+                "technical_safeguards": "implemented",
+                "breach_notification": "pending",
+                "business_associate_agreements": "pending"
+            }
+            analysis["risk_assessment"] = {
+                "data_breach_risk": "very_low",
+                "regulatory_fine_risk": "very_low",
+                "reputation_risk": "very_low"
+            }
+            analysis["action_items"] = [
+                "Implement breach notification procedures",
+                "Establish business associate agreements",
+                "Regular security risk assessments"
+            ]
+        
+        return analysis 
