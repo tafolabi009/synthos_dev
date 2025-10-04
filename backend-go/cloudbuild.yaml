@@ -2,7 +2,6 @@ steps:
   # Build the container image
   - name: 'gcr.io/cloud-builders/docker'
     args: ['build', '-t', 'gcr.io/$PROJECT_ID/synthos-backend-go:$BUILD_ID', '.']
-    dir: 'backend-go'
 
   # Push the container image to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
@@ -32,8 +31,10 @@ steps:
       - '0'
       - '--max-instances'
       - '10'
-      - '--set-secrets'
-      - 'Synthos_backend=/etc/secrets/Synthos_backend:latest'
+      - '--add-volume'
+      - 'name=synthos-secret,secret=Synthos_backend'
+      - '--add-volume-mount'
+      - 'mount-path=/etc/secrets,name=synthos-secret'
       - '--vpc-connector'
       - 'connector-eu-n2'
       - '--vpc-egress'

@@ -14,7 +14,7 @@ import (
 	"github.com/genovotechnologies/synthos_dev/backend-go/internal/cache"
 	"github.com/genovotechnologies/synthos_dev/backend-go/internal/config"
 	"github.com/genovotechnologies/synthos_dev/backend-go/internal/db"
-	"github.com/genovotechnologies/synthos_dev/backend-go/internal/http/v1"
+	v1 "github.com/genovotechnologies/synthos_dev/backend-go/internal/http/v1"
 	"github.com/genovotechnologies/synthos_dev/backend-go/internal/logger"
 	"github.com/genovotechnologies/synthos_dev/backend-go/internal/middleware"
 	"github.com/genovotechnologies/synthos_dev/backend-go/internal/repo"
@@ -88,14 +88,14 @@ func main() {
 		logg.Fatal("failed to create generation schema", zap.Error(err))
 	}
 
-	bl := auth.NewBlacklist(redisClient.Client)
-	
-	// Initialize custom model repository
+	// Initialize custom model repo
 	customModelRepo := repo.NewCustomModelRepo(database.SQL)
 	if err := customModelRepo.CreateSchema(context.Background()); err != nil {
 		logg.Fatal("failed to create custom model schema", zap.Error(err))
 	}
-	
+
+	bl := auth.NewBlacklist(redisClient.Client)
+
 	usageService := usage.NewUsageService(userRepo, genRepo, datasetRepo, customModelRepo)
 
 	// Initialize advanced repositories
@@ -153,7 +153,7 @@ func main() {
 			EmailService: emailService,
 			Blacklist:    bl,
 		},
-		Users:   v1.UserDeps{Users: userRepo},
+		Users: v1.UserDeps{Users: userRepo},
 		Datasets: v1.DatasetDeps{
 			Datasets:      datasetRepo,
 			Usage:         usageService,
